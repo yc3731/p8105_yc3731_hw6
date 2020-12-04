@@ -10,6 +10,9 @@ library(tidyverse)
 library(viridis)
 library(modelr)
 library(mgcv)
+library(purrr)
+
+set.seed(1)
 
 knitr::opts_chunk$set(
 	echo = TRUE,
@@ -183,4 +186,89 @@ cv_df %>%
 ```
 According to the violin plot, the optimal model performs the best compared to the other two models since it has the lowest root-mean-square deviation.
 
+## Problem 3
 
+Import dataset.
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"), 
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2017-01-01", 
+    date_max = "2017-12-31"
+  ) %>%
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"), 
+    tmin = tmin / 10, 
+    tmax = tmax / 10
+  ) %>%
+  select(name, id, everything())
+```
+```{r}
+boot_strap_results = 
+  weather_df %>%
+  bootstrap(n = 5000) %>%
+  mutate(
+    models = map(strap, ~lm(tmax ~ tmin, data = .x)), 
+    tidy_models = map(models, broom::tidy), 
+    glance_models = map(models, broom::glance)
+  ) %>%
+  unnest(tidy_models, glance_models) %>%
+  select(.id, term, estimate, r.squared) %>%
+  pivot_wider(
+    names_from = term, 
+    values_from = estimate
+  ) %>%
+  rename(
+    beta0_hat = `(Intercept)`, 
+    beta1_hat = tmin
+  ) %>%
+  mutate(
+    log_b0xb1 = log(beta0_hat * beta1_hat)
+  ) %>%
+  janitor::clean_names() %>%
+  select(r_squared, log_b0xb1)
+```
+
+Density plot.
+
+```{r}
+boot_strap_results %>%
+  ggplot(aes(x = r_squared)) + 
+  geom_density(fill = "blue") + 
+  labs(
+    x = ~hat(r)^2, 
+    y = "density", 
+    title = "distribution of" ~hat(r)^2
+  )
+```
+
+95% confidence interval. 
+
+```{r}
+CI_rsquared = round(quantile(pull(boot_strap_results, r_squared), probs = c(0.025, 0.975)), digits = 2)
+```
+
+The r squared is approximately normally distributed. The mean r squared is 0.91. We are 95% confident that the r squared will fall between 0.89 and 0.93. 
+
+Density plot. 
+
+```{r}
+boot_strap_results %>%
+  ggplot(aes(x = log_b0xb1)) + 
+  geom_density(fill = "blue") + 
+  labs(
+    x = ~log(hat(beta)[0] %*% hat(beta)[1]), 
+    y = "Density", 
+    title = "distribution of" ~log(hat(beta)[0] %*% hat(beta)[1])
+  )
+```
+
+95% confidence interval. 
+
+```{r}
+CI_log_b0xb1 = round(quantile(pull(boot_strap_results, log_b0xb1), probs = c(0.025, 0.975)), digits = 2)
+```
+
+The distribution of `log_b0xb1` is normal and centering at 2.01. We are 95% confident that `log_b0xb1` will fall between 1.96 and 2.06.
